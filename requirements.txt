@@ -1,5 +1,5 @@
-flask==3.0.0
-python-dotenv==1.0.0
-pydantic-ai==0.0.14
-pydantic==2.5.0
-openai>=1.0.0
+flask
+python-dotenv
+pydantic-ai
+pydantic
+openai
