@@ -45,7 +45,7 @@ class AgentDeps(BaseModel):
 
 
 # Initialize the Pydantic AI model
-model = OpenAIModel('gpt-3.5-turbo', api_key=OPENAI_API_KEY)
+model = OpenAIModel('gpt-3.5-turbo')
 
 # Initialize the agent with dependencies
 agent = Agent(
