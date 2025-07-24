@@ -268,6 +268,6 @@ def get_history():
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8080))
     logger.info(f"Starting Pydantic AI Agent on port {port}...")
-    logger.info(f"Available tools: {list(agent._function_toolset)}")
+    logger.info(f"Available tools: {agent._function_toolset.tools.keys()}")
 
     app.run(host='0.0.0.0', port=port, debug=False)
