@@ -216,10 +216,11 @@ def health():
         return jsonify({
             "status": "healthy",
             "agent_responsive": bool(test_response),
-            "tools_count": len(agent._function_tools),
+            # "tools_count": len(agent._function_tools),
             "timestamp": datetime.now().isoformat()
         })
     except Exception as e:
+        logger.error(f"Error in health check: {str(e)}")
         return jsonify({
             "status": "unhealthy",
             "error": str(e),
