@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simple Pydantic AI Agent with Tools for AI Agent Platform.
+Simple Pydantic AI Agent with Tools for AI Agent Platform using FastAPI.
 This agent can use tools to answer questions and perform calculations.
 """
 
@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import List, Dict, Any
 
 from dotenv import load_dotenv
-from flask import Flask, request, jsonify
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 # Pydantic AI imports
@@ -24,9 +24,6 @@ load_dotenv()
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Initialize Flask app
-app = Flask(__name__)
 
 # Configuration
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
@@ -43,6 +40,58 @@ class ChatHistory(BaseModel):
 class AgentDeps(BaseModel):
     chat_history: ChatHistory = ChatHistory()
 
+
+class ChatRequest(BaseModel):
+    message: str
+
+
+class ChatResponse(BaseModel):
+    response: str
+    response_time: float
+    timestamp: str
+    usage: Dict[str, int]
+
+
+class HealthResponse(BaseModel):
+    status: str
+    agent_responsive: bool
+    timestamp: str
+    error: str = None
+
+
+class ToolInfo(BaseModel):
+    name: str
+    description: str
+
+
+class ToolsResponse(BaseModel):
+    tools: List[ToolInfo]
+
+
+class AgentInfo(BaseModel):
+    name: str
+    type: str
+    tools: List[str]
+    endpoints: Dict[str, str]
+
+
+class MessageResponse(BaseModel):
+    message: str
+    timestamp: str
+
+
+class HistoryResponse(BaseModel):
+    history: List[Dict[str, str]]
+    count: int
+    timestamp: str
+
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="Simple Pydantic AI Agent",
+    description="A helpful assistant with access to various tools using Pydantic AI",
+    version="1.0.0"
+)
 
 # Initialize the Pydantic AI model
 model = OpenAIModel('gpt-3.5-turbo')
@@ -127,37 +176,32 @@ global_deps = AgentDeps()
 
 
 # API Routes
-@app.route('/', methods=['GET'])
-def home():
+@app.get("/", response_model=AgentInfo)
+async def home():
     """Home endpoint with agent information."""
     # Get tool names from the agent
     tool_names = []
-    for tool_name in agent._function_tools:
+    for tool_name in agent._function_toolset.tools:
         tool_names.append(tool_name)
 
-    return jsonify({
-        "name": "Simple Pydantic AI Agent",
-        "type": "pydantic-ai-agent",
-        "tools": tool_names,
-        "endpoints": {
+    return AgentInfo(
+        name="Simple Pydantic AI Agent",
+        type="pydantic-ai-agent",
+        tools=tool_names,
+        endpoints={
             "chat": "/chat",
             "health": "/health",
             "tools": "/tools",
             "clear_history": "/clear_history"
         }
-    })
+    )
 
 
-@app.route('/chat', methods=['POST'])
-def chat():
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
     """Main chat endpoint for the agent."""
     try:
-        data = request.get_json()
-
-        if not data or 'message' not in data:
-            return jsonify({"error": "No message provided"}), 400
-
-        message = data['message']
+        message = request.message
         logger.info(f"Processing message: {message}")
 
         # Add user message to history
@@ -186,89 +230,95 @@ def chat():
         if len(global_deps.chat_history.messages) > 20:
             global_deps.chat_history.messages = global_deps.chat_history.messages[-20:]
 
-        return jsonify({
-            "response": response,
-            "response_time": response_time,
-            "timestamp": datetime.now().isoformat(),
-            "usage": {
+        return ChatResponse(
+            response=response,
+            response_time=response_time,
+            timestamp=datetime.now().isoformat(),
+            usage={
                 "total_tokens": result.usage().total_tokens if result.usage() else 0,
                 "prompt_tokens": result.usage().request_tokens if result.usage() else 0,
                 "completion_tokens": result.usage().response_tokens if result.usage() else 0,
             }
-        })
+        )
 
     except Exception as e:
         logger.error(f"Error in chat: {str(e)}")
-        return jsonify({
-            "error": "An error occurred",
-            "details": str(e)
-        }), 500
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "An error occurred",
+                "details": str(e)
+            }
+        )
 
 
-@app.route('/health', methods=['GET'])
-def health():
+@app.get("/health")
+async def health():
     """Health check endpoint."""
     try:
         # Test the agent with a simple query
-        test_result = agent.run_sync("What is 2+2?", deps=AgentDeps())
+        test_result = await agent.run("What is 2+2?", deps=AgentDeps())
         test_response = test_result.data
 
-        return jsonify({
-            "status": "healthy",
-            "agent_responsive": bool(test_response),
-            # "tools_count": len(agent._function_tools),
-            "timestamp": datetime.now().isoformat()
-        })
+        return HealthResponse(
+            status="healthy",
+            agent_responsive=bool(test_response),
+            timestamp=datetime.now().isoformat()
+        )
     except Exception as e:
         logger.error(f"Error in health check: {str(e)}")
-        return jsonify({
-            "status": "unhealthy",
-            "error": str(e),
-            "timestamp": datetime.now().isoformat()
-        }), 503
+        raise HTTPException(
+            status_code=503,
+            detail=HealthResponse(
+                status="unhealthy",
+                agent_responsive=False,
+                error=str(e),
+                timestamp=datetime.now().isoformat()
+            ).dict()
+        )
 
 
-@app.route('/tools', methods=['GET'])
-def list_tools():
+@app.get("/tools", response_model=ToolsResponse)
+async def list_tools():
     """List available tools."""
     tools_info = []
 
     for tool_name, tool_func in agent._function_tools.items():
-        tools_info.append({
-            "name": tool_name,
-            "description": tool_func.__doc__ or "No description available"
-        })
+        tools_info.append(ToolInfo(
+            name=tool_name,
+            description=tool_func.__doc__ or "No description available"
+        ))
 
-    return jsonify({
-        "tools": tools_info
-    })
+    return ToolsResponse(tools=tools_info)
 
 
-@app.route('/clear_history', methods=['POST'])
-def clear_history():
+@app.post("/clear_history", response_model=MessageResponse)
+async def clear_history():
     """Clear conversation history."""
     global global_deps
     global_deps.chat_history.messages.clear()
 
-    return jsonify({
-        "message": "Conversation history cleared",
-        "timestamp": datetime.now().isoformat()
-    })
+    return MessageResponse(
+        message="Conversation history cleared",
+        timestamp=datetime.now().isoformat()
+    )
 
 
-@app.route('/history', methods=['GET'])
-def get_history():
+@app.get("/history", response_model=HistoryResponse)
+async def get_history():
     """Get conversation history."""
-    return jsonify({
-        "history": global_deps.chat_history.messages,
-        "count": len(global_deps.chat_history.messages),
-        "timestamp": datetime.now().isoformat()
-    })
+    return HistoryResponse(
+        history=global_deps.chat_history.messages,
+        count=len(global_deps.chat_history.messages),
+        timestamp=datetime.now().isoformat()
+    )
 
 
 if __name__ == '__main__':
+    import uvicorn
+
     port = int(os.getenv('PORT', 8080))
     logger.info(f"Starting Pydantic AI Agent on port {port}...")
     logger.info(f"Available tools: {agent._function_toolset.tools.keys()}")
 
-    app.run(host='0.0.0.0', port=port, debug=False)
+    uvicorn.run(app, host="0.0.0.0", port=port)
